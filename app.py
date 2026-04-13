@@ -67,58 +67,67 @@ def echo_skill():
 
 
 # 4. 발화 내용을 네이버 뉴스에서 검색해서 제목 크롤링
+
 @app.route("/naver-news", methods=["POST"])
 def naver_news_skill():
     data = request.get_json(silent=True) or {}
+    # 발화 추출
     user_input = data.get("userRequest", {}).get("utterance", "").strip()
+    
+    # "AI" 등의 짧은 단어에서 공백 제거
+    search_query = user_input.replace(" ", "")
 
-    if not user_input:
-        return jsonify({
-            "version": "2.0",
-            "template": {
-                "outputs": [{
-                    "simpleText": {
-                        "text": "검색어가 없습니다."
-                    }
-                }]
-            }
-        })
+    if not search_query:
+        return jsonify({"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "검색어를 입력해주세요."}}]}})
 
-    query = urllib.parse.quote(user_input)
-    url = f"https://search.naver.com/search.naver?where=news&query={query}"
-
+    url = "https://search.naver.com/search.naver"
+    
+    # 중요: 브라우저인 척 하기 위해 헤더 보강
     headers = {
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": "https://www.naver.com"
+    }
+    
+    params = {
+        "where": "news",
+        "query": search_query,
+        "sm": "tab_pge",
+        "sort": "0" # 관련도순
     }
 
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        # 만약 네이버에서 차단했다면 status_code가 200이 아님
+        if response.status_code != 200:
+            return jsonify({"version": "2.0", "template": {"outputs": [{"simpleText": {"text": f"네이버 접속 실패 (코드: {response.status_code})"}}]}})
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # 최신 네이버 뉴스 제목 클래스는 .news_tit 입니다.
+        # 만약 이게 안 잡히면 .news_area 내의 a태그를 시도합니다.
         items = soup.select(".news_tit")
 
         titles = []
         for item in items[:5]:
-            titles.append(item.get("title", item.get_text(strip=True)))
+            title_text = item.get_text(strip=True)
+            titles.append(title_text)
 
         if titles:
-            result_text = "\n".join([f"{i+1}. {title}" for i, title in enumerate(titles)])
+            result_text = f"'{search_query}' 뉴스 검색 결과입니다.\n\n"
+            result_text += "\n".join([f"{i+1}. {t}" for i, t in enumerate(titles)])
         else:
-            result_text = "검색 결과를 찾지 못했습니다."
+            # 검색 결과가 없는 게 아니라 '제목' 요소를 못 찾은 경우일 수 있음
+            result_text = f"검색 결과 요소를 찾을 수 없습니다. (입력값: {search_query})"
 
     except Exception as e:
-        result_text = f"크롤링 중 오류가 발생했습니다: {str(e)}"
+        result_text = f"서버 오류 발생: {str(e)}"
 
-    response = {
+    return jsonify({
         "version": "2.0",
         "template": {
-            "outputs": [{
-                "simpleText": {
-                    "text": result_text[:1000]
-                }
-            }]
+            "outputs": [{"simpleText": {"text": result_text[:1000]}}]
         }
-    }
-    return jsonify(response)
+    })
 
 
 # 5. 울산 날씨 크롤링
